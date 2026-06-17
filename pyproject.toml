@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catalogger"
+version = "2.0.0"
+description = "A local, deduplicated, queryable archive of HTTP traffic for security research."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Tom Englund" }]
+keywords = ["proxy", "mitmproxy", "http", "archive", "bug-bounty", "fingerprint"]
+dependencies = [
+    "psycopg[binary]>=3.1",
+    "zstandard>=0.22",
+]
+
+[project.optional-dependencies]
+# capture engine — install on the box running the proxy
+mitm = ["mitmproxy>=10.0"]
+
+[project.scripts]
+catalogger = "catalogger.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/NaturellFil/catalogger"
+
+[tool.setuptools.packages.find]
+include = ["catalogger*"]

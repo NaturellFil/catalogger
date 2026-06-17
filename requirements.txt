@@ -1,0 +1,5 @@
+psycopg[binary]>=3.1
+zstandard>=0.22
+# capture engine (only needed on the box running the proxy):
+mitmproxy>=10.0     # for the mitmproxy source
+# proxify is a separate Go binary: github.com/projectdiscovery/proxify

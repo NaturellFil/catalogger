@@ -1,0 +1,26 @@
+# runtime / deployment artifacts — never commit
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# local database cluster + capture data
+pgdata/
+sock/
+pg.log
+proxify_logs/
+proxify_logs.jsonl
+*.log
+
+# secrets & generated config (hold DB password / live tokens)
+.env
+capture.env
+proxy.env
+proxify-ca*
+*.pem
+*.key
+
+# editor noise
+.idea/
+.vscode/
+*.swp

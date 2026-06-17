@@ -1,0 +1,14 @@
+[Unit]
+Description=catalogger capture proxy (mitmproxy -> Postgres, deduped)
+After=catalogger-pg.service network.target
+Wants=catalogger-pg.service
+
+[Service]
+WorkingDirectory=%h/.local/share/catalogger
+EnvironmentFile=%h/.local/share/catalogger/capture.env
+ExecStart=%h/.local/share/catalogger/.venv/bin/mitmdump -q --listen-host 127.0.0.1 -p 8888 -s %h/.local/share/catalogger/catalogger/sources/mitm_addon.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

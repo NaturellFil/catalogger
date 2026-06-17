@@ -1,0 +1,10 @@
+[Unit]
+Description=catalogger: (re)fingerprint newly captured flows
+After=catalogger-pg.service
+Wants=catalogger-pg.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.local/share/catalogger
+EnvironmentFile=%h/.local/share/catalogger/capture.env
+ExecStart=%h/.local/bin/catalogger fingerprint --new

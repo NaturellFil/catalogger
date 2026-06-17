@@ -1,0 +1,14 @@
+[Unit]
+Description=catalogger local PostgreSQL (user-owned, 127.0.0.1 only)
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/postgres -D %h/.local/share/catalogger/pgdata -k %h/.local/share/catalogger/sock
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGINT
+TimeoutStartSec=120
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

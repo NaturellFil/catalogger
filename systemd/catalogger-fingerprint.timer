@@ -1,0 +1,10 @@
+[Unit]
+Description=catalogger: fingerprint freshly captured flows every few minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
