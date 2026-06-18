@@ -7,9 +7,9 @@ inlined. Bound to 127.0.0.1 only -- the archive holds live tokens.
     catalogger serve            # then open http://127.0.0.1:8765
 
 Search syntax (mix freely):
-    checkout.example          bare terms -> host/url match OR body full-text
+    checkout.example          bare terms -> literal substring on host/url
     tech:f5-big-ip            exact tech tag (repeatable)
-    body:"access denied"      restrict to full-text over request+response bodies
+    body:"access denied"      full-text over request+response bodies
     status:403  method:POST  program:my-program
 """
 from __future__ import annotations
@@ -85,13 +85,11 @@ def search_summaries(conn, q: str, limit: int = 300):
                       OR f.resp_body_sha IN (SELECT sha256 FROM body_text WHERE tsv @@ plainto_tsquery('simple',%s)))""")
         params += [f["body"], f["body"]]
     for t in f["terms"]:
-        # a bare term matches the host/url OR the full text of either body
-        where.append(
-            "(f.host ILIKE %s OR f.url ILIKE %s"
-            " OR f.req_body_sha  IN (SELECT sha256 FROM body_text WHERE tsv @@ plainto_tsquery('simple',%s))"
-            " OR f.resp_body_sha IN (SELECT sha256 FROM body_text WHERE tsv @@ plainto_tsquery('simple',%s)))"
-        )
-        params += [f"%{t}%", f"%{t}%", t, t]
+        # a bare term is a literal substring match on host/url (case-insensitive).
+        # Body content is searched only via the explicit body:"..." filter, so
+        # `au` returns URLs containing "au" -- not every flow with an a and a u.
+        where.append("(f.host ILIKE %s OR f.url ILIKE %s)")
+        params += [f"%{t}%", f"%{t}%"]
     clause = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"""
         SELECT f.id, f.ts, f.method, f.status, f.host, f.path, f.url, f.fingerprints
@@ -239,7 +237,7 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
   .reqline{color:#a7f3d0}.statusline{font-weight:700}
 </style></head><body>
 <div id="bar">
-  <input id="q" placeholder="search host/url + bodies… or tech:f5-big-ip  status:403  method:POST" autofocus>
+  <input id="q" placeholder="substring host/url… · body:&quot;text&quot; · tech:f5-big-ip · status:403 · method:POST" autofocus>
   <span id="hint">↑↓ navigate · enter open</span><span id="count"></span>
 </div>
 <div id="main"><div id="list"></div><div id="detail" class="empty">select a flow</div></div>
@@ -247,25 +245,27 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
 const $=s=>document.querySelector(s), q=$('#q'), list=$('#list'), detail=$('#detail'), count=$('#count');
 let results=[], view=[], sel=0;
 
-// --- fzf-style fuzzy scorer (subsequence + bonuses), client-side ---
-function fz(needle, hay){
+// --- literal substring matcher (matches the server's ILIKE), client-side ---
+// `au` highlights the literal "au" span(s), not scattered a's and u's.
+function sub(needle, hay){
   if(!needle) return {score:0, pos:[]};
-  const n=needle.toLowerCase(), h=hay.toLowerCase(); let i=0,score=0,pos=[],prev=-2;
-  for(let j=0;j<h.length && i<n.length;j++){
-    if(h[j]===n[i]){
-      let b=1;
-      if(j===prev+1) b+=3;                       // consecutive
-      if(j===0||'/.:-_?&='.includes(h[j-1])) b+=4;// word boundary
-      score+=b; pos.push(j); prev=j; i++;
-    }
+  const n=needle.toLowerCase(), h=hay.toLowerCase();
+  let from=0, idx, pos=[], hits=0, first=-1;
+  while((idx=h.indexOf(n, from))>=0){
+    if(first<0) first=idx;
+    for(let k=0;k<n.length;k++) pos.push(idx+k);
+    hits++; from=idx+n.length;
   }
-  return i===n.length ? {score, pos} : null;
+  if(!hits) return null;                          // no substring -> no match
+  let score=100-Math.min(first,99)+hits;          // earlier + more hits rank higher
+  if(first===0||'/.:-_?&='.includes(h[first-1])) score+=20; // word-boundary bonus
+  return {score, pos};
 }
 // AND across bare terms; union highlight positions on host+path
 function rankTerms(terms, r){
   const hay=(r.host+r.path);
   let total=0, pos=new Set();
-  for(const t of terms){ const m=fz(t,hay); if(!m) return null; total+=m.score; m.pos.forEach(p=>pos.add(p)); }
+  for(const t of terms){ const m=sub(t,hay); if(!m) return null; total+=m.score; m.pos.forEach(p=>pos.add(p)); }
   return {score:total, pos};
 }
 function bareTerms(){
@@ -283,9 +283,11 @@ function render(){
   // host/path fuzzy for ordering+highlight, but keep rows that only matched in
   // a body — flag them so they render a "body" chip and sort below host hits.
   view = results.map(r=>{
+    // Server already vetted every row by substring on the full URL (host+path+
+    // query). Rank/highlight by host+path; a term that only lives in the query
+    // string just won't highlight here -- it's still a real URL match, not body.
     if(terms.length){ const m=rankTerms(terms,r);
-      if(m) return {r, score:m.score, pos:m.pos, body:false};
-      return {r, score:-1, pos:null, body:true}; }
+      return {r, score:m?m.score:0, pos:m?m.pos:null, body:false}; }
     return {r, score:0, pos:null, body:false};
   });
   if(terms.length) view.sort((a,b)=>b.score-a.score);

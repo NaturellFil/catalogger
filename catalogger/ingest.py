@@ -52,16 +52,21 @@ class BatchWriter:
                 if not batch:
                     continue
                 with conn.cursor() as cur:
+                    ok = 0
                     for f in batch:
+                        # Per-flow savepoint: a single bad flow rolls back only
+                        # itself, not the whole batch (one NUL-laden body used to
+                        # take down up to batch_size good flows with it).
                         try:
+                            cur.execute("SAVEPOINT f")
                             persist(cur, f)
-                        except Exception as e:  # one bad flow shouldn't kill the batch
-                            conn.rollback()
-                            print(f"[catalogger] persist error: {e}")
-                            break
-                    else:
-                        conn.commit()
-                        self.written += len(batch)
+                            cur.execute("RELEASE SAVEPOINT f")
+                            ok += 1
+                        except Exception as e:
+                            cur.execute("ROLLBACK TO SAVEPOINT f")
+                            print(f"[catalogger] persist error (flow dropped): {e}")
+                    conn.commit()
+                    self.written += ok
         finally:
             conn.close()
 

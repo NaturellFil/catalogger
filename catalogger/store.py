@@ -40,7 +40,10 @@ def store_body(cur, body: Optional[bytes], content_type: str = "") -> Optional[s
         (sha, len(body), compressed, is_text),
     )
     if is_text:
-        text = body.decode("utf-8", "replace")[:1_000_000]
+        # Postgres text/tsvector cannot hold NUL (0x00); strip it before
+        # indexing. Decoded text bodies rarely contain NUL, but a mislabelled
+        # binary or a stray NUL must not blow up the full-text insert.
+        text = body.decode("utf-8", "replace").replace("\x00", "")[:1_000_000]
         cur.execute(
             """
             INSERT INTO body_text (sha256, tsv)
