@@ -2,8 +2,8 @@
 # catalogger installer — sets up a user-local deployment from this repo.
 #
 # Reproduces: venv + deps, a user-owned Postgres cluster, the mitmproxy capture
-# service, the fingerprint timer, the `catalogger` + `observer` launchers, and
-# the systemd user services. No root required EXCEPT installing the system
+# service, the fingerprint timer, the `catalogger` launcher, and the systemd
+# user services. No root required EXCEPT installing the system
 # packages (postgresql, and optionally the proxy CA into the trust store).
 #
 #   ./install.sh
@@ -63,7 +63,7 @@ export NO_PROXY="localhost,127.0.0.1,::1,.anthropic.com,api.anthropic.com"
 export no_proxy="$NO_PROXY"
 EOF
 
-say "installing launchers (catalogger, observer)"
+say "installing launcher (catalogger)"
 cat > "$BIN/catalogger" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -73,7 +73,6 @@ export PYTHONPATH="\$ROOT\${PYTHONPATH:+:\$PYTHONPATH}"
 exec "\$ROOT/.venv/bin/python" -m catalogger.cli "\$@"
 EOF
 chmod +x "$BIN/catalogger"
-cp "$REPO/observer/observer.py" "$BIN/observer"; chmod +x "$BIN/observer"
 
 say "installing systemd user services"
 for u in catalogger-pg catalogger-mitm catalogger-fingerprint.service catalogger-fingerprint.timer; do
@@ -110,5 +109,7 @@ Remaining manual steps:
 
 GUIs:
   catalogger serve     # archive GUI   -> http://127.0.0.1:8765
-  observer             # live Claude-session inspector
+
+The live Claude Code session viewer (observer) now lives in its own repo:
+  https://github.com/NaturellFil/observer
 EOF
