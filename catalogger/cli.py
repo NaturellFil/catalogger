@@ -2,6 +2,7 @@
 
   catalogger initdb
   catalogger fingerprint [--all | --new]
+  catalogger rollup
   catalogger query --tech akamai --host .fr --grep "internal" --curl
   catalogger stats
   catalogger ingest-proxify proxify_logs.jsonl [--follow]
@@ -41,6 +42,13 @@ def cmd_fingerprint(args):
     with _connect() as conn:
         n = fingerprint_all(conn, only_untagged=args.new)
     print(f"fingerprinted {n} flows")
+
+
+def cmd_rollup(_):
+    from .store import rebuild_agg
+    with _connect() as conn:
+        n = rebuild_agg(conn)
+    print(f"rolled up {n:,} flows into flow_agg")
 
 
 def cmd_query(args):
@@ -112,6 +120,10 @@ def main(argv=None):
     fp.add_argument("--new", action="store_true", help="only flows with no tags yet")
     fp.add_argument("--all", dest="new", action="store_false")
     fp.set_defaults(func=cmd_fingerprint, new=False)
+
+    sub.add_parser(
+        "rollup", help="rebuild flow_agg unique-shape rollup from stored flows"
+    ).set_defaults(func=cmd_rollup)
 
     q = sub.add_parser("query")
     q.add_argument("--tech", action="append", help="repeatable; matches all given")

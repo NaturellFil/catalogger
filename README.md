@@ -120,6 +120,7 @@ Run the helper, then log out/in:
 
 ```bash
 catalogger fingerprint --all                 # re-tag the whole corpus
+catalogger rollup                            # rebuild the flow_agg unique-shape rollup
 catalogger query --tech cloudflare --host .fr --curl
 catalogger query --grep "BIGipServer"        # FTS over deduped bodies
 catalogger show <id>                         # full request/response detail
