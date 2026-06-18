@@ -7,8 +7,8 @@ up **every host you ever hit that runs it**, with a replayable request for each.
 It is not a live proxy window (Caido already does that well). It is the
 **permanent, queryable memory** that sits behind one.
 
-Ships with **observer**, a companion read-only viewer for live Claude Code
-sessions (see [`observer/`](observer/)).
+A companion read-only viewer for live Claude Code sessions lives in its own
+repo: [**observer**](https://github.com/NaturellFil/observer).
 
 ---
 
@@ -153,7 +153,6 @@ the proxy by default. Keep the cluster on an encrypted volume.
 ```
 catalogger/        the Python package (CLI, dedup store, fingerprint, query, GUI)
   sources/         capture sources: mitm_addon.py (default), proxify_tail.py
-observer/          read-only live viewer for Claude Code sessions
 systemd/           user service + timer units
 scripts/           init-db.sh, setup-browsers.sh
 install.sh         one-command deployment
