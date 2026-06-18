@@ -53,8 +53,8 @@ class Flow:
             status=resp.status_code if resp else None,
             req_headers=dict(req.headers),
             resp_headers=dict(resp.headers) if resp else {},
-            req_body=req.raw_content,
-            resp_body=resp.raw_content if resp else None,
+            req_body=_mitm_content(req),
+            resp_body=_mitm_content(resp),
             duration_ms=dur,
             program=program,
             session_id=session_id,
@@ -120,6 +120,26 @@ class Flow:
 
 
 # -- helpers --------------------------------------------------------------------
+
+def _mitm_content(msg):
+    """Decoded message body (gunzip/brotli/deflate applied), best-effort.
+
+    mitmproxy's `raw_content` is the bytes as they came off the wire -- i.e.
+    still gzip/br-compressed when the response was encoded. Storing that and
+    then full-text indexing it as "text" produces garbage full of NUL bytes,
+    which Postgres rejects. `get_content(strict=False)` returns the *decoded*
+    body and never raises on a bad/unknown encoding (falls back to raw).
+    """
+    if msg is None:
+        return None
+    get = getattr(msg, "get_content", None)
+    if callable(get):
+        try:
+            return get(strict=False)
+        except Exception:
+            pass
+    return getattr(msg, "raw_content", None)
+
 
 def _q(s: str) -> str:
     return "'" + str(s).replace("'", "'\\''") + "'"
