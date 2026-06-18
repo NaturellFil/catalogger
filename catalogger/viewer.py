@@ -7,9 +7,9 @@ inlined. Bound to 127.0.0.1 only -- the archive holds live tokens.
     catalogger serve            # then open http://127.0.0.1:8765
 
 Search syntax (mix freely):
-    checkout.example          bare terms -> fuzzy host/url match
+    checkout.example          bare terms -> host/url match OR body full-text
     tech:f5-big-ip            exact tech tag (repeatable)
-    body:"access denied"      full-text over request+response bodies
+    body:"access denied"      restrict to full-text over request+response bodies
     status:403  method:POST  program:my-program
 """
 from __future__ import annotations
@@ -85,8 +85,13 @@ def search_summaries(conn, q: str, limit: int = 300):
                       OR f.resp_body_sha IN (SELECT sha256 FROM body_text WHERE tsv @@ plainto_tsquery('simple',%s)))""")
         params += [f["body"], f["body"]]
     for t in f["terms"]:
-        where.append("(f.host ILIKE %s OR f.url ILIKE %s)")
-        params += [f"%{t}%", f"%{t}%"]
+        # a bare term matches the host/url OR the full text of either body
+        where.append(
+            "(f.host ILIKE %s OR f.url ILIKE %s"
+            " OR f.req_body_sha  IN (SELECT sha256 FROM body_text WHERE tsv @@ plainto_tsquery('simple',%s))"
+            " OR f.resp_body_sha IN (SELECT sha256 FROM body_text WHERE tsv @@ plainto_tsquery('simple',%s)))"
+        )
+        params += [f"%{t}%", f"%{t}%", t, t]
     clause = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"""
         SELECT f.id, f.ts, f.method, f.status, f.host, f.path, f.url, f.fingerprints
@@ -223,6 +228,7 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
   .me{color:var(--dim);width:46px;display:inline-block}
   .pa{color:var(--fg)}.ho{color:var(--acc)}
   .chip{display:inline-block;background:#1f2937;color:#9ca3af;border-radius:4px;padding:0 5px;margin-left:5px;font-size:10px}
+  .bodychip{background:#14302e;color:#5eead4}
   mark{background:var(--mark);color:#000;border-radius:2px}
   #detail{overflow:auto;padding:12px 14px}
   #detail h3{margin:14px 0 6px;font-size:11px;letter-spacing:1px;color:var(--dim)}
@@ -233,7 +239,7 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
   .reqline{color:#a7f3d0}.statusline{font-weight:700}
 </style></head><body>
 <div id="bar">
-  <input id="q" placeholder="fuzzy host/url… or tech:f5-big-ip  body:&quot;access denied&quot;  status:403" autofocus>
+  <input id="q" placeholder="search host/url + bodies… or tech:f5-big-ip  status:403  method:POST" autofocus>
   <span id="hint">↑↓ navigate · enter open</span><span id="count"></span>
 </div>
 <div id="main"><div id="list"></div><div id="detail" class="empty">select a flow</div></div>
@@ -273,19 +279,25 @@ function hl(str, posSet, off){
 }
 function render(){
   const terms=bareTerms();
+  // The server already vetted every row (host/url OR body full-text). Rank by
+  // host/path fuzzy for ordering+highlight, but keep rows that only matched in
+  // a body — flag them so they render a "body" chip and sort below host hits.
   view = results.map(r=>{
-    if(terms.length){ const m=rankTerms(terms,r); if(!m) return null; return {r, score:m.score, pos:m.pos}; }
-    return {r, score:0, pos:null};
-  }).filter(Boolean);
+    if(terms.length){ const m=rankTerms(terms,r);
+      if(m) return {r, score:m.score, pos:m.pos, body:false};
+      return {r, score:-1, pos:null, body:true}; }
+    return {r, score:0, pos:null, body:false};
+  });
   if(terms.length) view.sort((a,b)=>b.score-a.score);
   if(sel>=view.length) sel=Math.max(0,view.length-1);
   list.innerHTML = view.map((v,idx)=>{
     const r=v.r, sc='s'+String(r.status||0)[0];
     const ho=hl(r.host, v.pos, 0), pa=hl(r.path, v.pos, r.host.length);
+    const bc=v.body?'<span class="chip bodychip">body</span>':'';
     const chips=(r.tech||[]).slice(0,3).map(t=>`<span class="chip">${t}</span>`).join('');
     return `<div class="row ${idx===sel?'sel':''}" data-i="${idx}">
       <span class="st ${sc}">${r.status??''}</span><span class="me">${r.method}</span>
-      <span class="ho">${ho}</span><span class="pa">${pa}</span>${chips}</div>`;
+      <span class="ho">${ho}</span><span class="pa">${pa}</span>${bc}${chips}</div>`;
   }).join('');
   count.textContent = view.length+(view.length===300?'+':'');
   if(view.length) open(sel);
