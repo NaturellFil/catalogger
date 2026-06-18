@@ -88,10 +88,47 @@ def write_agg(cur, f: Flow, resp_sha: Optional[str]) -> None:
 
 
 def persist(cur, f: Flow) -> None:
-    """Full persist path for one flow (called by the batch writer)."""
+    """Full persist path for one flow (called by the batch writer).
+
+    The flow_agg rollup is maintained for *every* flow so the unique-shape
+    view (one row per host+method+path+status+resp_body, with hit_count and
+    first/last_seen) always reflects the whole corpus. `collapse` only governs
+    whether we ALSO keep the individual flow row: a high-volume fuzz firehose
+    sets collapse=True to bump the aggregate without storing every hit.
+    """
     req_sha = store_body(cur, f.req_body, f.req_content_type)
     resp_sha = store_body(cur, f.resp_body, f.resp_content_type)
-    if f.collapse:
-        write_agg(cur, f, resp_sha)
-    else:
+    write_agg(cur, f, resp_sha)
+    if not f.collapse:
         write_flow(cur, f, req_sha, resp_sha)
+
+
+def rebuild_agg(conn, batch: int = 1000) -> int:
+    """Rebuild flow_agg from scratch by replaying every stored flow through
+    write_agg. Backfill for corpora captured before the rollup was maintained,
+    and re-runnable any time. Idempotent: TRUNCATE then re-aggregate in ts
+    order so first_seen/last_seen and hit_count come out correct.
+    """
+    from types import SimpleNamespace
+
+    with conn.cursor() as w:
+        w.execute("TRUNCATE flow_agg")
+    n = 0
+    with conn.cursor(name="agg_cursor") as cur:  # server-side cursor for big corpora
+        cur.itersize = batch
+        cur.execute(
+            """
+            SELECT ts, program, source_tool, method, host, path, status, resp_body_sha
+            FROM flows ORDER BY ts
+            """
+        )
+        with conn.cursor() as w:
+            for ts, program, source_tool, method, host, path, status, resp_sha in cur:
+                f = SimpleNamespace(
+                    ts=ts, program=program, source_tool=source_tool,
+                    method=method, host=host, path=path, status=status,
+                )
+                write_agg(w, f, resp_sha)
+                n += 1
+        conn.commit()
+    return n
