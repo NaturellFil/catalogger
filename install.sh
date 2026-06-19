@@ -26,6 +26,7 @@ mkdir -p "$ROOT" "$BIN" "$UNITS"
 cp -r "$REPO/catalogger" "$ROOT/"
 cp "$REPO/schema.sql" "$REPO/requirements.txt" "$REPO/config.example.env" "$ROOT/"
 cp "$REPO/scripts/init-db.sh" "$ROOT/"; chmod +x "$ROOT/init-db.sh"
+cp "$REPO/scripts/trust-ca.sh" "$ROOT/"; chmod +x "$ROOT/trust-ca.sh"
 
 say "creating venv + installing dependencies (incl. mitmproxy)"
 python3 -m venv "$ROOT/.venv"
@@ -61,6 +62,19 @@ export http_proxy=http://127.0.0.1:8888
 export https_proxy=http://127.0.0.1:8888
 export NO_PROXY="localhost,127.0.0.1,::1,.anthropic.com,api.anthropic.com"
 export no_proxy="$NO_PROXY"
+
+# --- TLS: trust the mitmproxy CA so tools don't fail the proxied handshake ---
+# Without this, Java/Python/Node use private trust stores, fail TLS through the
+# proxy, and get "fixed" by bypassing capture — a blind spot in the DB. The CA
+# files below already contain mitmproxy after running scripts/trust-ca.sh.
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export NODE_EXTRA_CA_CERTS="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+# Java ignores all of the above and every JDK ships its own cacerts, so point
+# all JVMs at a generated store that includes the mitmproxy CA (JDK-agnostic).
+# Guarded: no store -> don't set it, so a missing file can't break TLS instead.
+[ -f "$HOME/.local/share/catalogger/cacerts.jks" ] && \
+  export JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$HOME/.local/share/catalogger/cacerts.jks -Djavax.net.ssl.trustStorePassword=changeit"
 EOF
 
 say "installing launcher (catalogger)"
@@ -101,8 +115,9 @@ cat <<EOF
 
 $(say "done")
 Remaining manual steps:
-  1. Trust the mitmproxy CA so HTTPS can be read (run once, in a normal shell):
-       sudo trust anchor ~/.mitmproxy/mitmproxy-ca-cert.pem
+  1. Trust the mitmproxy CA so HTTPS can be read AND so Java/Python/Node tools
+     don't fail TLS through the proxy (and get bypassed, blinding capture):
+       bash ~/.local/share/catalogger/trust-ca.sh   # runs once; uses sudo for the system store
   2. Optional — capture browser traffic too: see README "Capturing browser traffic".
   3. Open a fresh terminal so the proxy env loads, then:
        curl https://example.com && catalogger query
