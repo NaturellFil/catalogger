@@ -182,7 +182,11 @@ class Handler(BaseHTTPRequestHandler):
             with psycopg.connect(_dsn()) as conn:
                 if u.path == "/api/search":
                     q = (qs.get("q") or [""])[0]
-                    return self._json(search_summaries(conn, q))
+                    try:
+                        lim = min(1000, max(1, int((qs.get("limit") or ["300"])[0])))
+                    except ValueError:
+                        lim = 300
+                    return self._json(search_summaries(conn, q, lim))
                 if u.path == "/api/facets":
                     return self._json(facets(conn))
                 if u.path.startswith("/api/flow/"):
@@ -226,7 +230,6 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
   .me{color:var(--dim);width:46px;display:inline-block}
   .pa{color:var(--fg)}.ho{color:var(--acc)}
   .chip{display:inline-block;background:#1f2937;color:#9ca3af;border-radius:4px;padding:0 5px;margin-left:5px;font-size:10px}
-  .bodychip{background:#14302e;color:#5eead4}
   mark{background:var(--mark);color:#000;border-radius:2px}
   #detail{overflow:auto;padding:12px 14px}
   #detail h3{margin:14px 0 6px;font-size:11px;letter-spacing:1px;color:var(--dim)}
@@ -238,12 +241,15 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
 </style></head><body>
 <div id="bar">
   <input id="q" placeholder="substring host/url… · body:&quot;text&quot; · tech:f5-big-ip · status:403 · method:POST" autofocus>
-  <span id="hint">↑↓ navigate · enter open</span><span id="count"></span>
+  <span id="hint">↑↓ navigate · empty = live tail</span><span id="count"></span>
 </div>
 <div id="main"><div id="list"></div><div id="detail" class="empty">select a flow</div></div>
 <script>
 const $=s=>document.querySelector(s), q=$('#q'), list=$('#list'), detail=$('#detail'), count=$('#count');
-let results=[], view=[], sel=0;
+const LIVE_LIMIT=50, SEARCH_LIMIT=300, POLL_MS=2000;
+let results=[], view=[], sel=0, curId=null, polling=0, timer=0;
+// empty query = "live tail": poll for new flows and keep the latest LIVE_LIMIT on top.
+const isLive=()=>q.value.trim()==='';
 
 // --- literal substring matcher (matches the server's ILIKE), client-side ---
 // `au` highlights the literal "au" span(s), not scattered a's and u's.
@@ -279,31 +285,32 @@ function hl(str, posSet, off){
 }
 function render(){
   const terms=bareTerms();
-  // The server already vetted every row (host/url OR body full-text). Rank by
-  // host/path fuzzy for ordering+highlight, but keep rows that only matched in
-  // a body — flag them so they render a "body" chip and sort below host hits.
+  // The server already vetted every row (literal substring on host+url, or the
+  // body: full-text filter). Rank/highlight by host+path; a term that only
+  // lives in the query string stays a real match, it just won't highlight here.
   view = results.map(r=>{
-    // Server already vetted every row by substring on the full URL (host+path+
-    // query). Rank/highlight by host+path; a term that only lives in the query
-    // string just won't highlight here -- it's still a real URL match, not body.
     if(terms.length){ const m=rankTerms(terms,r);
-      return {r, score:m?m.score:0, pos:m?m.pos:null, body:false}; }
-    return {r, score:0, pos:null, body:false};
+      return {r, score:m?m.score:0, pos:m?m.pos:null}; }
+    return {r, score:0, pos:null};
   });
   if(terms.length) view.sort((a,b)=>b.score-a.score);
-  if(sel>=view.length) sel=Math.max(0,view.length-1);
+  // keep the user's selected flow across live refreshes; otherwise clamp.
+  const keep = curId!=null ? view.findIndex(v=>v.r.id===curId) : -1;
+  sel = keep>=0 ? keep : Math.min(sel, Math.max(0,view.length-1));
+  const scrollTop=list.scrollTop;
   list.innerHTML = view.map((v,idx)=>{
     const r=v.r, sc='s'+String(r.status||0)[0];
     const ho=hl(r.host, v.pos, 0), pa=hl(r.path, v.pos, r.host.length);
-    const bc=v.body?'<span class="chip bodychip">body</span>':'';
     const chips=(r.tech||[]).slice(0,3).map(t=>`<span class="chip">${t}</span>`).join('');
     return `<div class="row ${idx===sel?'sel':''}" data-i="${idx}">
       <span class="st ${sc}">${r.status??''}</span><span class="me">${r.method}</span>
-      <span class="ho">${ho}</span><span class="pa">${pa}</span>${bc}${chips}</div>`;
+      <span class="ho">${ho}</span><span class="pa">${pa}</span>${chips}</div>`;
   }).join('');
-  count.textContent = view.length+(view.length===300?'+':'');
-  if(view.length) open(sel);
-  else detail.innerHTML='<span class="empty">no matches</span>';
+  list.scrollTop=scrollTop;                       // re-render shouldn't jump the list
+  const cap=isLive()?LIVE_LIMIT:SEARCH_LIMIT;
+  count.textContent=(isLive()?'● live · ':'')+view.length+(view.length>=cap?'+':'');
+  if(!view.length){ detail.innerHTML='<span class="empty">no matches</span>'; curId=null; return; }
+  showSel(false);
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]));}
 function bodyHtml(b, ct){
@@ -317,12 +324,16 @@ function headers(h){
   const ks=Object.keys(h||{}); if(!ks.length) return '';
   return '<pre>'+ks.map(k=>`<span class="hk">${esc(k)}</span>: ${esc(h[k])}`).join('\n')+'</pre>';
 }
-async function open(idx){
-  sel=idx;
-  [...list.children].forEach((el,i)=>el.classList.toggle('sel',i===idx));
-  const r=view[idx]?.r; if(!r) return;
-  const cur=list.children[idx]; if(cur) cur.scrollIntoView({block:'nearest'});
-  const d=await (await fetch('/api/flow/'+r.id)).json();
+function select(idx, scroll){ if(idx<0||idx>=view.length) return; sel=idx; showSel(scroll); }
+function showSel(scroll){
+  [...list.children].forEach((el,i)=>el.classList.toggle('sel',i===sel));
+  const r=view[sel]?.r; if(!r) return;
+  if(scroll){ const cur=list.children[sel]; if(cur) cur.scrollIntoView({block:'nearest'}); }
+  if(r.id!==curId) openDetail(r.id);              // skip the fetch if it's already shown
+}
+async function openDetail(id){
+  curId=id;
+  const d=await (await fetch('/api/flow/'+id)).json();
   const rct=(d.resp_headers&&(d.resp_headers['content-type']||d.resp_headers['Content-Type']))||'';
   const qct=(d.req_headers&&(d.req_headers['content-type']||d.req_headers['Content-Type']))||'';
   const qline=`${d.method} ${esc(d.path)}${d.query?'?'+esc(d.query):''} HTTP/1.1`;
@@ -335,17 +346,22 @@ async function open(idx){
     <h3>REQUEST</h3><pre class="reqline">${qline}</pre>${headers(d.req_headers)}${bodyHtml(d.req_body,qct)}
     <h3>RESPONSE</h3><pre class="statusline">HTTP/1.1 ${d.status}</pre>${headers(d.resp_headers)}${bodyHtml(d.resp_body,rct)}`;
 }
-let timer;
-async function run(){
-  const r=await fetch('/api/search?q='+encodeURIComponent(q.value));
-  results=await r.json(); sel=0; render();
+async function run(reset){
+  const r=await fetch('/api/search?q='+encodeURIComponent(q.value)+'&limit='+(isLive()?LIVE_LIMIT:SEARCH_LIMIT));
+  results=await r.json();
+  if(reset){ sel=0; curId=null; }
+  render();
 }
-q.addEventListener('input',()=>{ clearTimeout(timer); timer=setTimeout(run,120); });
-list.addEventListener('click',e=>{ const row=e.target.closest('.row'); if(row) open(+row.dataset.i); });
+function poll(){                                  // single self-rescheduling live-tail loop
+  clearTimeout(polling);
+  polling=setTimeout(async()=>{ if(isLive() && !document.hidden) await run(false); poll(); }, POLL_MS);
+}
+q.addEventListener('input',()=>{ clearTimeout(timer); timer=setTimeout(()=>run(true),120); });
+list.addEventListener('click',e=>{ const row=e.target.closest('.row'); if(row) select(+row.dataset.i,true); });
 document.addEventListener('keydown',e=>{
   if(document.activeElement===q && !['ArrowDown','ArrowUp'].includes(e.key)) return;
-  if(e.key==='ArrowDown'){e.preventDefault(); if(sel<view.length-1) open(sel+1);}
-  if(e.key==='ArrowUp'){e.preventDefault(); if(sel>0) open(sel-1);}
+  if(e.key==='ArrowDown'){e.preventDefault(); select(sel+1,true);}
+  if(e.key==='ArrowUp'){e.preventDefault(); select(sel-1,true);}
 });
-run();
+run(true); poll();
 </script></body></html>"""
