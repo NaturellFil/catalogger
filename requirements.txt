@@ -1,5 +1,6 @@
 psycopg[binary]>=3.1
 zstandard>=0.22
+httpx[http2]>=0.27   # repeater: resend stored flows
 # capture engine (only needed on the box running the proxy):
 mitmproxy>=10.0     # for the mitmproxy source
 # proxify is a separate Go binary: github.com/projectdiscovery/proxify

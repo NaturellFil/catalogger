@@ -53,8 +53,12 @@ CREATE TABLE IF NOT EXISTS flows (
     req_body_sha  char(64)    REFERENCES bodies(sha256),
     resp_body_sha char(64)    REFERENCES bodies(sha256),
     duration_ms   integer,
-    fingerprints  text[]      NOT NULL DEFAULT '{}'
+    fingerprints  text[]      NOT NULL DEFAULT '{}',
+    replay_of     bigint      REFERENCES flows(id)   -- repeater lineage: parent flow
 );
+-- migration for DBs created before the repeater landed
+ALTER TABLE flows ADD COLUMN IF NOT EXISTS replay_of bigint REFERENCES flows(id);
+CREATE INDEX IF NOT EXISTS flows_replay_of_idx ON flows (replay_of);
 CREATE INDEX IF NOT EXISTS flows_host_idx         ON flows (host);
 CREATE INDEX IF NOT EXISTS flows_ts_idx           ON flows (ts);
 CREATE INDEX IF NOT EXISTS flows_status_idx       ON flows (status);
