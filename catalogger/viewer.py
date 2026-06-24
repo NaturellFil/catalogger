@@ -37,7 +37,7 @@ def _dsn() -> str:
 
 def parse_query(q: str) -> dict:
     f = {"tech": [], "status": None, "program": None, "method": None,
-         "body": None, "terms": []}
+         "body": None, "id": None, "terms": []}
     try:
         toks = shlex.split(q or "")
     except ValueError:
@@ -50,6 +50,8 @@ def parse_query(q: str) -> dict:
                 f["tech"].append(v)
             elif k == "status" and v.isdigit():
                 f["status"] = int(v)
+            elif k == "id" and v.isdigit():
+                f["id"] = int(v)
             elif k == "program":
                 f["program"] = v
             elif k == "method":
@@ -71,6 +73,9 @@ def search_summaries(conn, q: str, limit: int = 300):
     if f["tech"]:
         where.append("f.fingerprints @> %s")
         params.append(f["tech"])
+    if f["id"] is not None:
+        where.append("f.id = %s")
+        params.append(f["id"])
     if f["status"] is not None:
         where.append("f.status = %s")
         params.append(f["status"])
@@ -240,7 +245,7 @@ INDEX_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
   .reqline{color:#a7f3d0}.statusline{font-weight:700}
 </style></head><body>
 <div id="bar">
-  <input id="q" placeholder="substring host/url… · body:&quot;text&quot; · tech:f5-big-ip · status:403 · method:POST" autofocus>
+  <input id="q" placeholder="substring host/url… · id:123 · body:&quot;text&quot; · tech:f5-big-ip · status:403 · method:POST" autofocus>
   <span id="hint">↑↓ navigate · empty = live tail</span><span id="count"></span>
 </div>
 <div id="main"><div id="list"></div><div id="detail" class="empty">select a flow</div></div>
